@@ -1,0 +1,44 @@
+kind: Deployment
+apiVersion: apps/v1
+
+metadata:
+  name: k8s-event-tailer
+  labels:
+    app: k8s-event-tailer
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8s-event-tailer
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: k8s-event-tailer
+    spec:
+      serviceAccountName: k8s-event-tailer
+      containers:
+        - name: k8s-event-tailer
+          image: sandipb/k8s-event-tailer
+          args:
+            - "-k"
+            - ""
+            - "-s"
+            - "0"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            initialDelaySeconds: 10
+            httpGet:
+              path: /healthz
+              port: http          
+          livenessProbe:
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            httpGet:
+              path: /healthz
+              port: http                    
