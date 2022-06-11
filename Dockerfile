@@ -10,6 +10,4 @@ WORKDIR /app
 COPY --from=0 /go/src/github.com/sandipb/k8s-event-tailer/k8s-event-tailer ./
 ENTRYPOINT ["./k8s-event-tailer"]
 
-# Disable stats logging by default
-CMD ["--stats-interval=0"]
 EXPOSE 8000  

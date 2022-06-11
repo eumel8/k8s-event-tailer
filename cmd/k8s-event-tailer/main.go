@@ -16,20 +16,19 @@ import (
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
 )
 
 const (
-	defaultKubeconfig   = "~/.kube/config"
-	defaultStatsSeconds = 10
-	defaultPort         = 8000
+	defaultKubeconfig = ""
+	defaultPort       = 8000
 )
 
 var (
-	kubeconfig   = kingpin.Flag("kubeconfig", "Path to kubeconfig or set in env(KUBECONFIG)").Default(defaultKubeconfig).Short('k').Envar("KUBECONFIG").String()
-	verbose      = kingpin.Flag("verbose", "Debug logging").Short('v').Bool()
-	namespace    = kingpin.Flag("namespace", "Namespace").Default(corev1.NamespaceAll).Short('n').String()
-	statsSeconds = kingpin.Flag("stats-interval", "Seconds after which stats are printed").Default(strconv.Itoa(defaultStatsSeconds)).Short('s').Int()
-	port         = kingpin.Flag("port", "HTTP port for metrics").Default(strconv.Itoa(defaultPort)).Short('p').Int()
+	kubeconfig = kingpin.Flag("kubeconfig", "Path to kubeconfig or set in env(KUBECONFIG)").Default(defaultKubeconfig).Short('k').Envar("KUBECONFIG").String()
+	verbose    = kingpin.Flag("verbose", "Debug logging").Short('v').Bool()
+	namespace  = kingpin.Flag("namespace", "Namespace").Default(corev1.NamespaceAll).Short('n').String()
+	port       = kingpin.Flag("port", "HTTP port for metrics").Default(strconv.Itoa(defaultPort)).Short('p').Int()
 
 	addCounter    int32
 	updateCounter int32
@@ -44,6 +43,8 @@ func setup() {
 	if *verbose {
 		log.Logger = log.Logger.Level(zerolog.DebugLevel)
 	}
+
+	klog.SetOutput(log.Logger)
 
 	if strings.HasPrefix(*kubeconfig, "~/") {
 		*kubeconfig = strings.Replace(*kubeconfig, "~/", os.Getenv("HOME")+"/", 1)
@@ -67,9 +68,8 @@ func main() {
 	log.Info().Msgf("Using kubeconfig: %v", *kubeconfig)
 	clientset := getKubeClient()
 	watcher := EventWatcher{
-		client:               clientset.CoreV1().RESTClient(),
-		namespace:            *namespace,
-		statsIntervalSeconds: *statsSeconds,
+		client:    clientset.CoreV1().RESTClient(),
+		namespace: *namespace,
 	}
 
 	signalChan := make(chan os.Signal, 1)

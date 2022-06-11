@@ -22,12 +22,10 @@ spec:
       containers:
         - name: k8s-event-tailer
           image: sandipb/k8s-event-tailer
-          args:
-            - "-k"
-            - ""
-            - "-s"
-            - "0"
           imagePullPolicy: IfNotPresent
+          env:
+            - name: KUBECONFIG
+              value: ""
           ports:
             - name: http
               containerPort: 8000

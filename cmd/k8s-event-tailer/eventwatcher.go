@@ -18,14 +18,14 @@ import (
 const oldEventAgeMinutes = 5
 
 type EventWatcher struct {
-	client               rest.Interface
-	namespace            string
-	statsIntervalSeconds int
-	logger               zerolog.Logger
+	client    rest.Interface
+	namespace string
+	logger    zerolog.Logger
 
 	_startTime       time.Time
 	_store           cache.Store
 	_controller      cache.Controller
+	startTimeGauge   prometheus.Gauge
 	storeSizeGauge   prometheus.GaugeFunc
 	addCounter       prometheus.Counter
 	updateCounter    prometheus.Counter
@@ -41,46 +41,63 @@ func (ew *EventWatcher) Run(stopChan chan struct{}, wg *sync.WaitGroup) {
 	ew._store = store
 	ew._controller = controller
 	ew.logger = log.With().Str("component", "watcher").Logger()
-	ew.setupStats()
+
 	ew._startTime = time.Now().UTC()
+
+	ew.setupStats()
 
 	go controller.Run(stopChan)
 	ew.logger.Info().Msg("Watcher started")
-
-	iwg := new(sync.WaitGroup)
-	iwg.Add(1)
-	go ew.runStatsPrint(stopChan, iwg)
-	iwg.Wait()
+	<-stopChan
 }
 
 func (ew *EventWatcher) setupStats() {
+	ew.startTimeGauge = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "informer_start_time",
+		Help: "Start time for the informer",
+	})
+	ew.startTimeGauge.Set(float64(ew._startTime.Unix()))
+
 	ew.storeSizeGauge = promauto.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "informer_store_size",
 		Help: "Number of items in store",
 	}, func() float64 {
 		return float64(len(ew._store.ListKeys()))
 	})
+
 	ew.addCounter = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "informer_events_add_total",
 		Help: "Number of new events received by the informer",
 	})
+
 	ew.updateCounter = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "informer_events_update_total",
 		Help: "Number of update events received by the informer",
 	})
+
 	ew.deleteCounter = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "informer_events_delete_total",
 		Help: "Number of delete events received by the informer",
 	})
+
 	ew.oldEventsCounter = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "informer_events_old_total",
 		Help: "Number of old events ignored by the informer",
 	})
 }
 
+func (ew *EventWatcher) isOldEvent(event *corev1.Event) bool {
+	// events after app startup time are eligible
+	if event.LastTimestamp.Time.UTC().After(ew._startTime) {
+		return false
+	}
+	// for events before start time, they need to be within threshold
+	return ew._startTime.UTC().Sub(event.LastTimestamp.Time.UTC()) > oldEventAgeMinutes*time.Minute
+}
+
 func (ew *EventWatcher) OnAdd(obj interface{}) {
 	event := obj.(*corev1.Event)
-	if event.LastTimestamp.Time.UTC().After(ew._startTime) || time.Since(event.LastTimestamp.Time.UTC()) < oldEventAgeMinutes*time.Minute {
+	if !ew.isOldEvent(event) {
 		ew.logEvent(event, "Event added")
 		atomic.AddInt32(&addCounter, 1)
 		ew.addCounter.Inc()
@@ -92,7 +109,7 @@ func (ew *EventWatcher) OnAdd(obj interface{}) {
 
 func (ew *EventWatcher) OnUpdate(oldObj, newObj interface{}) {
 	event := newObj.(*corev1.Event)
-	if event.LastTimestamp.Time.UTC().After(ew._startTime) || time.Since(event.LastTimestamp.Time.UTC()) < oldEventAgeMinutes*time.Minute {
+	if !ew.isOldEvent(event) {
 		ew.logEvent(event, "Event updated")
 		atomic.AddInt32(&updateCounter, 1)
 		ew.updateCounter.Inc()
@@ -104,7 +121,7 @@ func (ew *EventWatcher) OnUpdate(oldObj, newObj interface{}) {
 
 func (ew *EventWatcher) OnDelete(obj interface{}) {
 	event := obj.(*corev1.Event)
-	if event.LastTimestamp.Time.UTC().After(ew._startTime) || time.Since(event.LastTimestamp.Time.UTC()) < oldEventAgeMinutes*time.Minute {
+	if !ew.isOldEvent(event) {
 		ew.logEvent(event, "Event deleted")
 		atomic.AddInt32(&deleteCounter, 1)
 		ew.deleteCounter.Inc()
@@ -130,30 +147,4 @@ func (ew *EventWatcher) logEvent(event *corev1.Event, message string) {
 		Str("age", time.Since(event.LastTimestamp.Time).Round(time.Second).String()).
 		Int32("count", event.Count).
 		Msg(message)
-}
-
-func (ew *EventWatcher) runStatsPrint(stopChan chan struct{}, wg *sync.WaitGroup) {
-	defer wg.Done()
-	if ew.statsIntervalSeconds <= 0 {
-		ew.logger.Info().Msg("Disabling stats")
-		return
-	}
-
-	ticker := time.NewTicker(time.Duration(ew.statsIntervalSeconds) * time.Second)
-	ew.logger.Info().Msg("Starting stats")
-	var prevAdd, prevUpdate, prevDelete int32
-	for {
-		select {
-		case <-stopChan:
-			ew.logger.Info().Msg("Stopping stats")
-			ticker.Stop()
-			return
-		case <-ticker.C:
-			addC, updateC, deleteC := atomic.LoadInt32(&addCounter), atomic.LoadInt32(&updateCounter), atomic.LoadInt32(&deleteCounter)
-			ew.logger.Info().Msgf("STATS: Number of items in store: %d", len(ew._store.ListKeys()))
-			ew.logger.Info().Msgf("STATS: addCounter: %d, updateCounter: %d, deleteCounter: %d", addC, updateC, deleteC)
-			ew.logger.Info().Msgf("STATS: added: %d, updated: %d, deleted: %d", addC-prevAdd, updateC-prevUpdate, deleteC-prevDelete)
-			prevAdd, prevUpdate, prevDelete = addC, updateC, deleteC
-		}
-	}
 }
