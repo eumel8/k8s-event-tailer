@@ -95,7 +95,7 @@ func (ew *EventWatcher) isOldEvent(event *corev1.Event) bool {
 	return ew._startTime.UTC().Sub(event.LastTimestamp.Time.UTC()) > oldEventAgeMinutes*time.Minute
 }
 
-func (ew *EventWatcher) OnAdd(obj interface{}) {
+func (ew *EventWatcher) OnAdd(obj interface{}, isInInitialList bool) {
 	event := obj.(*corev1.Event)
 	if !ew.isOldEvent(event) {
 		ew.logEvent(event, "Event added")
